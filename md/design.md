@@ -27,6 +27,20 @@
 | 离线索引 | [design-offline.md](design-offline.md) | 数据源接入、解析清洗、结构化、Chunk 切分、Embedding、索引存储 |
 | 在线检索 | [design-online.md](design-online.md) | Query 预处理、多路召回、重排、上下文构造、Prompt、LLM 生成、后处理 |
 
+### 模块详细设计
+
+| 模块 | 文档 | 说明 |
+|-----|------|------|
+| Chunk 切分 | [design-chunker.md](design-chunker.md) | 切分策略、Token 计算、边界处理、配置化设计 |
+| Embedding | [design-embedding.md](design-embedding.md) | Embedding 阶段流程、性能分析、异常处理、进度管理 |
+
+### 公共参考文档
+
+| 文档 | 说明 | 引用方 |
+|-----|------|-------|
+| [shared-embedding-model-spec.md](shared-embedding-model-spec.md) | Embedding 模型规格（text-embedding-v4 API、参数、约束） | design-embedding.md、design-chunker.md |
+| [shared-embedding-client.md](shared-embedding-client.md) | EmbeddingClient 接口设计（批量分片、重试策略、配置） | design-embedding.md、design-online.md |
+
 ## 4. 流程图
 
 详见 [flow.md](flow.md)

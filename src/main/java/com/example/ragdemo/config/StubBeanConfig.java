@@ -1,11 +1,9 @@
 package com.example.ragdemo.config;
 
-import com.example.ragdemo.chunker.Chunker;
 import com.example.ragdemo.embedding.EmbeddingClient;
 import com.example.ragdemo.llm.LlmClient;
 import com.example.ragdemo.retrieval.*;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -19,22 +17,13 @@ import java.util.List;
  * 每个 Bean 使用 @ConditionalOnMissingBean，一旦有真实实现注册，stub 会自动退让。
  * </p>
  */
+@Slf4j
 @Configuration
 public class StubBeanConfig {
 
-    private static final Logger log = LoggerFactory.getLogger(StubBeanConfig.class);
     private static final String STUB_WARN = "[STUB] {} is not implemented yet";
 
     // ========== 离线流水线 ==========
-
-    @Bean
-    @ConditionalOnMissingBean
-    public Chunker stubChunker() {
-        return document -> {
-            log.warn(STUB_WARN, "Chunker");
-            throw new UnsupportedOperationException("Chunker not implemented");
-        };
-    }
 
     @Bean
     @ConditionalOnMissingBean

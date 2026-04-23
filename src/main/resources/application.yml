@@ -12,3 +12,18 @@ rag:
     chunk-overlap: 64
     min-chunk-size: 100
     max-chunk-size: 1024
+    default-strategy: STRUCTURE_AWARE
+    inject-title-path: true
+    title-path-separator: " > "
+    semantic-threshold: 0.5
+
+  embedding:
+    model-name: text-embedding-v4
+    dimension: 1024
+    api-base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    api-key: ${DASHSCOPE_API_KEY:}
+    batch-size: 10
+    timeout-seconds: 30
+    max-retries: 3
+    retry-delay-ms: 1000
+    retry-backoff-multiplier: 2.0
