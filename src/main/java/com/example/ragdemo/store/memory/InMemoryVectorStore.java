@@ -4,6 +4,7 @@ import com.example.ragdemo.model.domain.RetrievalResult;
 import com.example.ragdemo.store.VectorStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.stereotype.Component;
 
 import java.util.*;
@@ -13,6 +14,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * 内存实现的向量存储 — MVP 阶段使用，后续替换为 Milvus / Qdrant / pgvector
  */
 @Component
+@ConditionalOnMissingBean(VectorStore.class)
 public class InMemoryVectorStore implements VectorStore {
 
     private static final Logger log = LoggerFactory.getLogger(InMemoryVectorStore.class);
