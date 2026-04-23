@@ -4,3 +4,11 @@ server:
 spring:
   application:
     name: rag-demo
+
+# RAG 配置
+rag:
+  chunking:
+    chunk-size: 512
+    chunk-overlap: 64
+    min-chunk-size: 100
+    max-chunk-size: 1024
