@@ -63,12 +63,12 @@ rawQuery
        │
        ▼
 ┌──────────────────────┐
-│  Step 3: Query 改写   │  MVP 阶段跳过；V2 接入 LLM 改写
+│  Step 3: Query 改写   │  LLM 改写，可配置降级
 └──────┬───────────────┘
        │
        ▼
 ┌──────────────────────┐
-│  Step 4: 意图识别     │  MVP 阶段默认 "qa"；V2 接入分类模型
+│  Step 4: 意图识别     │  LLM 意图分类，可配置降级
 └──────┬───────────────┘
        │
        ▼
@@ -93,7 +93,7 @@ public String clean(String raw) {
 - 全角字母/数字转半角（中文输入法误输入场景）
 - 统一中英文标点：中文问号 `？` → `?`
 
-### 3.4 Step 3 — Query 改写（V2）
+### 3.4 Step 3 — Query 改写
 
 利用 LLM 将用户口语化查询改写为更精准的检索查询：
 
@@ -108,20 +108,9 @@ User: {rawQuery}
 - 可配置是否启用改写（`rag.query.rewrite-enabled`）
 - 改写结果可记录到日志，便于调试和评估改写效果
 
-### 3.5 Step 4 — 意图识别（V2）
+### 3.5 Step 4 — 意图识别
 
-基于 LLM 或规则模型判断查询意图：
-
-**规则方案（轻量）：**
-
-| 规则 | 匹配模式 | 意图 |
-|------|---------|------|
-| 包含"总结"、"概括"、"要点" | 关键词匹配 | `summary` |
-| 包含"区别"、"对比"、"比较" | 关键词匹配 | `comparison` |
-| 包含"如何"、"怎么"、"步骤" | 关键词匹配 | `how_to` |
-| 其他 | 默认 | `qa` |
-
-**LLM 方案（精准）：**
+通过 LLM 判断查询意图，失败时降级为默认意图 `qa`：
 
 ```
 System: 请判断以下查询的意图类型，只返回意图标签。
@@ -129,9 +118,14 @@ System: 请判断以下查询的意图类型，只返回意图标签。
 User: {query}
 ```
 
+设计要点：
+- LLM 返回结果需校验是否属于合法意图标签，非法值降级为 `qa`
+- 可配置是否启用意图识别（`rag.query.intent-recognition-enabled`）
+- 若 LLM 调用超时/失败，降级使用默认意图 `qa`，记录 warn 日志
+
 ---
 
-## 4. MVP 实现方案
+## 4. 实现方案
 
 ### 4.1 实现类：`DefaultQueryPreprocessor`
 
@@ -142,21 +136,56 @@ User: {query}
 public class DefaultQueryPreprocessor implements QueryPreprocessor {
 
     private static final String DEFAULT_INTENT = "qa";
+    private static final Set<String> VALID_INTENTS = Set.of("qa", "summary", "comparison", "how_to");
+
+    private final LlmClient llmClient;
+    private final QueryProperties queryProperties;
 
     @Override
     public ProcessedQuery process(String rawQuery) {
         // Step 1 + 2: 清洗 + 规范化
         String cleaned = clean(rawQuery);
 
-        // Step 3: 改写（MVP 跳过）
-        String rewritten = cleaned;
+        // Step 3: LLM 改写（失败时降级使用清洗后的 query）
+        String rewritten = rewrite(cleaned);
 
-        // Step 4: 意图识别（MVP 默认 qa）
-        String intent = DEFAULT_INTENT;
+        // Step 4: LLM 意图识别（失败时降级为默认意图 qa）
+        String intent = recognizeIntent(rewritten);
 
         log.debug("Query预处理: raw='{}' → rewritten='{}', intent='{}'",
                   rawQuery, rewritten, intent);
         return new ProcessedQuery(rewritten, intent);
+    }
+
+    private String rewrite(String cleaned) {
+        if (!queryProperties.isRewriteEnabled()) {
+            return cleaned;
+        }
+        try {
+            String prompt = "你是一个查询改写助手。请将用户的口语化问题改写为更适合文档检索的查询。"
+                          + "只输出改写后的查询，不要解释。";
+            String result = llmClient.chat(prompt, cleaned);
+            return (result != null && !result.isBlank()) ? result.strip() : cleaned;
+        } catch (Exception e) {
+            log.warn("LLM 改写失败，降级使用原始 query: {}", e.getMessage());
+            return cleaned;
+        }
+    }
+
+    private String recognizeIntent(String query) {
+        if (!queryProperties.isIntentRecognitionEnabled()) {
+            return DEFAULT_INTENT;
+        }
+        try {
+            String prompt = "请判断以下查询的意图类型，只返回意图标签。"
+                          + "可选标签：qa, summary, comparison, how_to";
+            String result = llmClient.chat(prompt, query);
+            String intent = (result != null) ? result.strip().toLowerCase() : DEFAULT_INTENT;
+            return VALID_INTENTS.contains(intent) ? intent : DEFAULT_INTENT;
+        } catch (Exception e) {
+            log.warn("LLM 意图识别失败，降级使用默认意图: {}", e.getMessage());
+            return DEFAULT_INTENT;
+        }
     }
 }
 ```
@@ -172,8 +201,8 @@ public class DefaultQueryPreprocessor implements QueryPreprocessor {
 ```yaml
 rag:
   query:
-    rewrite-enabled: false          # 是否启用 LLM 改写（V2 启用）
-    intent-recognition-enabled: false # 是否启用意图识别（V2 启用）
+    rewrite-enabled: true            # 是否启用 LLM 改写
+    intent-recognition-enabled: true  # 是否启用 LLM 意图识别
     cache-enabled: false            # 是否缓存预处理结果
     cache-ttl-minutes: 30           # 缓存 TTL
     cache-max-size: 10000           # 缓存最大条数
@@ -187,8 +216,8 @@ rag:
 |---------|---------|
 | rawQuery 为空或纯空白 | 抛出 `IllegalArgumentException`，由全局异常处理器返回 400 |
 | rawQuery 超长（> 2000 字符） | 截断至最大长度并记录 warn 日志 |
-| LLM 改写超时/失败（V2） | 降级使用清洗后的原始 query，记录 warn 日志 |
-| 意图识别失败（V2） | 降级使用默认意图 `qa` |
+| LLM 改写超时/失败 | 降级使用清洗后的原始 query，记录 warn 日志 |
+| 意图识别失败 | 降级使用默认意图 `qa` |
 
 ---
 
@@ -196,7 +225,6 @@ rag:
 
 | 阶段 | 能力 | 说明 |
 |------|------|------|
-| MVP | 正则清洗 + 规范化 + 默认意图 | 最小可行，不引入外部依赖 |
-| V2 | LLM 改写 + 规则意图识别 | 提升召回效果，需 LLM 调用 |
-| V2+ | LLM 意图识别 + 多查询生成 | 一题多解，生成多个子查询并行召回 |
+| V1 | 正则清洗 + 规范化 + LLM 改写 + LLM 意图识别 | 完整预处理能力，改写/意图均可配置降级 |
+| V2 | 多查询生成 | 一题多解，生成多个子查询并行召回 |
 | V3 | 高频 query 缓存 | 降低延迟，避免重复预处理 |

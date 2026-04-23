@@ -116,6 +116,12 @@ public class StubBeanConfig {
             }
 
             @Override
+            public String chat(String systemPrompt, String userMessage) {
+                log.warn(STUB_WARN, "LlmClient");
+                throw new UnsupportedOperationException("LlmClient not implemented");
+            }
+
+            @Override
             public Iterable<String> chatStream(String prompt) {
                 log.warn(STUB_WARN, "LlmClient");
                 throw new UnsupportedOperationException("LlmClient not implemented");

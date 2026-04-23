@@ -54,3 +54,27 @@ rag:
     hnsw-ef-construction: 256
     search-ef: 128
     consistency-level: EVENTUALLY
+
+  query:
+    rewrite-enabled: true            # 是否启用 LLM 改写
+    intent-recognition-enabled: true  # 是否启用 LLM 意图识别
+    max-query-length: 2000           # rawQuery 最大允许长度，超出则截断
+    cache-enabled: false             # 是否缓存预处理结果
+    cache-ttl-minutes: 30            # 缓存 TTL
+    cache-max-size: 10000            # 缓存最大条数
+
+  llm:
+    # 激活条件：api-key 有尚即注册真实 Bean，空尚时由 StubBeanConfig 占位
+    model-name: LongCat-Flash-Lite                       # 模型名称
+    api-base-url: https://api.longcat.chat/openai/v1     # API 地址（切换提供商时修改此项）
+    api-key: ${LLM_API_KEY:}                             # API Key（建议通过环境变量注入）
+    temperature: 1.0                                     # 生成温度
+    max-tokens: 1000                                     # 最大生成 token 数
+    timeout-seconds: 60                                  # 单次请求超时
+    max-retries: 3                                       # 最大重试次数
+    retry-delay-ms: 1000                                 # 重试初始间隔
+    retry-backoff-multiplier: 2.0                        # 退空倍数
+    # --- 切换至 DashScope 示例 ---
+    # model-name: qwen-plus
+    # api-base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    # api-key: ${DASHSCOPE_API_KEY:}

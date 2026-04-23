@@ -14,6 +14,15 @@ public interface LlmClient {
     String chat(String prompt);
 
     /**
+     * 同步调用 LLM，分别传入 System Prompt 和 User Message
+     *
+     * @param systemPrompt 系统角色指令
+     * @param userMessage  用户消息
+     * @return LLM 生成的回答文本
+     */
+    String chat(String systemPrompt, String userMessage);
+
+    /**
      * 流式调用 LLM（SSE），返回流式迭代器
      * <p>MVP 阶段可只实现同步版本，流式版本后续扩展</p>
      *
