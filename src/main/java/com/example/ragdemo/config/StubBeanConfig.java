@@ -2,6 +2,7 @@ package com.example.ragdemo.config;
 
 import com.example.ragdemo.embedding.EmbeddingClient;
 import com.example.ragdemo.llm.LlmClient;
+import com.example.ragdemo.model.dto.RagQueryResponse;
 import com.example.ragdemo.retrieval.*;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -97,7 +98,10 @@ public class StubBeanConfig {
     public PostProcessor stubPostProcessor() {
         return (rawAnswer, references) -> {
             log.warn(STUB_WARN, "PostProcessor");
-            return rawAnswer;
+            var response = new RagQueryResponse();
+            response.setAnswer(rawAnswer);
+            response.setReferences(Collections.emptyList());
+            return response;
         };
     }
 
