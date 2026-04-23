@@ -14,8 +14,8 @@ List<Chunk>  ──→  doEmbed(task, chunks)  ──→  List<float[]>
 ```
 
 **公共参考文档**：
-- 模型规格：[shared-embedding-model-spec.md](shared-embedding-model-spec.md)
-- 客户端接口：[shared-embedding-client.md](shared-embedding-client.md)
+- 模型规格：[shared-embedding-model-spec.md](../shared-embedding-model-spec.md)
+- 客户端接口：[shared-embedding-client.md](../shared-embedding-client.md)
 
 ---
 

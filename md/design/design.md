@@ -24,15 +24,15 @@
 
 | 流水线 | 文档 | 说明 |
 |-------|------|------|
-| 离线索引 | [design-offline.md](design-offline.md) | 数据源接入、解析清洗、结构化、Chunk 切分、Embedding、索引存储 |
-| 在线检索 | [design-online.md](design-online.md) | Query 预处理、多路召回、重排、上下文构造、Prompt、LLM 生成、后处理 |
+| 离线索引 | [design-offline.md](offline/design-offline.md) | 数据源接入、解析清洗、结构化、Chunk 切分、Embedding、索引存储 |
+| 在线检索 | [design-online.md](online/design-online.md) | Query 预处理、多路召回、重排、上下文构造、Prompt、LLM 生成、后处理 |
 
 ### 模块详细设计
 
 | 模块 | 文档 | 说明 |
 |-----|------|------|
-| Chunk 切分 | [design-chunker.md](design-chunker.md) | 切分策略、Token 计算、边界处理、配置化设计 |
-| Embedding | [design-embedding.md](design-embedding.md) | Embedding 阶段流程、性能分析、异常处理、进度管理 |
+| Chunk 切分 | [design-chunker.md](offline/design-chunker.md) | 切分策略、Token 计算、边界处理、配置化设计 |
+| Embedding | [design-embedding.md](offline/design-embedding.md) | Embedding 阶段流程、性能分析、异常处理、进度管理 |
 
 ### 公共参考文档
 
