@@ -7,6 +7,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Profile;
 
 import java.util.Collections;
 import java.util.List;
@@ -16,9 +17,13 @@ import java.util.List;
  * <p>
  * 每个 Bean 使用 @ConditionalOnMissingBean，一旦有真实实现注册，stub 会自动退让。
  * </p>
+ * <p>
+ * 仅在 dev / local 等开发环境生效，生产环境应禁用此配置。
+ * </p>
  */
 @Slf4j
 @Configuration
+@Profile({"dev", "local"})
 public class StubBeanConfig {
 
     private static final String STUB_WARN = "[STUB] {} is not implemented yet";

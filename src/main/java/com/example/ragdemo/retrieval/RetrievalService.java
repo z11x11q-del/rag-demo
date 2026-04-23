@@ -1,9 +1,7 @@
-package com.example.ragdemo.service;
+package com.example.ragdemo.retrieval;
 
 import com.example.ragdemo.embedding.EmbeddingClient;
 import com.example.ragdemo.model.domain.RetrievalResult;
-import com.example.ragdemo.retrieval.ContextBuilder;
-import com.example.ragdemo.retrieval.Reranker;
 import com.example.ragdemo.store.BM25Store;
 import com.example.ragdemo.store.VectorStore;
 import lombok.RequiredArgsConstructor;

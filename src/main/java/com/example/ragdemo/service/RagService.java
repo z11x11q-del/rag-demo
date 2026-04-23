@@ -7,6 +7,7 @@ import com.example.ragdemo.model.dto.RagQueryResponse;
 import com.example.ragdemo.retrieval.PostProcessor;
 import com.example.ragdemo.retrieval.PromptBuilder;
 import com.example.ragdemo.retrieval.QueryPreprocessor;
+import com.example.ragdemo.retrieval.RetrievalService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
