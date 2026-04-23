@@ -34,13 +34,13 @@ public class MarkdownDocumentStructurer implements DocumentStructurer {
         String rawText = parsedDocument.getRawText();
         if (rawText == null || rawText.isBlank()) {
             log.warn("Structuring skipped: rawText is empty, fileType={}", parsedDocument.getFileType());
-            return new StructuredDocument(buildMetadata(parsedDocument), List.of());
+            return new StructuredDocument(resolveSourceType(parsedDocument), buildMetadata(parsedDocument), List.of());
         }
 
         List<Section> sections = parseMarkdownSections(rawText);
         List<Section> tree = buildTree(sections);
         log.info("Structuring done: fileType=md, topLevelSections={}", tree.size());
-        return new StructuredDocument(buildMetadata(parsedDocument), tree);
+        return new StructuredDocument(resolveSourceType(parsedDocument), buildMetadata(parsedDocument), tree);
     }
 
     /**
@@ -139,5 +139,15 @@ public class MarkdownDocumentStructurer implements DocumentStructurer {
         metadata.put("fileType", parsedDocument.getFileType());
         metadata.put("structurer", getClass().getSimpleName());
         return metadata;
+    }
+
+    private String resolveSourceType(ParsedDocument parsedDocument) {
+        if (parsedDocument.getMetadata() != null) {
+            Object st = parsedDocument.getMetadata().get("sourceType");
+            if (st != null) {
+                return st.toString();
+            }
+        }
+        return "FILE";
     }
 }

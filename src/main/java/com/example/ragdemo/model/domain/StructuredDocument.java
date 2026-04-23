@@ -8,6 +8,8 @@ import java.util.Map;
  */
 public class StructuredDocument {
 
+    /** 数据源类型（FILE / URL / DB / API / LOG） */
+    private String sourceType;
     /** 元数据 */
     private Map<String, Object> metadata;
     /** 章节列表 */
@@ -15,10 +17,14 @@ public class StructuredDocument {
 
     public StructuredDocument() {}
 
-    public StructuredDocument(Map<String, Object> metadata, List<Section> sections) {
+    public StructuredDocument(String sourceType, Map<String, Object> metadata, List<Section> sections) {
+        this.sourceType = sourceType;
         this.metadata = metadata;
         this.sections = sections;
     }
+
+    public String getSourceType() { return sourceType; }
+    public void setSourceType(String sourceType) { this.sourceType = sourceType; }
 
     public Map<String, Object> getMetadata() { return metadata; }
     public void setMetadata(Map<String, Object> metadata) { this.metadata = metadata; }

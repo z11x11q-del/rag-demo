@@ -31,12 +31,12 @@ public abstract class AbstractTextDocumentStructurer implements DocumentStructur
         String rawText = parsedDocument.getRawText();
         if (rawText == null || rawText.isBlank()) {
             log.warn("Structuring skipped: rawText is empty, fileType={}", parsedDocument.getFileType());
-            return new StructuredDocument(buildMetadata(parsedDocument), List.of());
+            return new StructuredDocument(resolveSourceType(parsedDocument), buildMetadata(parsedDocument), List.of());
         }
 
         List<Section> sections = splitIntoSections(rawText);
         log.info("Structuring done: fileType={}, sections={}", parsedDocument.getFileType(), sections.size());
-        return new StructuredDocument(buildMetadata(parsedDocument), sections);
+        return new StructuredDocument(resolveSourceType(parsedDocument), buildMetadata(parsedDocument), sections);
     }
 
     /**
@@ -145,5 +145,18 @@ public abstract class AbstractTextDocumentStructurer implements DocumentStructur
         metadata.put("fileType", parsedDocument.getFileType());
         metadata.put("structurer", getClass().getSimpleName());
         return metadata;
+    }
+
+    /**
+     * 从 ParsedDocument 元数据中提取 sourceType，缺省为 FILE
+     */
+    protected String resolveSourceType(ParsedDocument parsedDocument) {
+        if (parsedDocument.getMetadata() != null) {
+            Object st = parsedDocument.getMetadata().get("sourceType");
+            if (st != null) {
+                return st.toString();
+            }
+        }
+        return "FILE";
     }
 }
