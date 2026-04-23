@@ -2,8 +2,8 @@ package com.example.ragdemo.store.memory;
 
 import com.example.ragdemo.model.domain.RetrievalResult;
 import com.example.ragdemo.store.BM25Store;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.util.Collections;
@@ -12,12 +12,12 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 内存实现的 BM25 倒排索引 — MVP 阶段使用，后续替换为 ElasticSearch
+ * 内存实现的 BM25 倒排索引 — 当 Elasticsearch 未启用时使用
  */
+@Slf4j
 @Component
+@ConditionalOnProperty(name = "rag.elasticsearch.enabled", havingValue = "false", matchIfMissing = true)
 public class InMemoryBM25Store implements BM25Store {
-
-    private static final Logger log = LoggerFactory.getLogger(InMemoryBM25Store.class);
 
     private final Map<String, String> indexedDocs = new ConcurrentHashMap<>();
 

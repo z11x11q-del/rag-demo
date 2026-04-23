@@ -28,6 +28,17 @@ rag:
     retry-delay-ms: 1000
     retry-backoff-multiplier: 2.0
 
+  elasticsearch:
+    enabled: false
+    uri: http://127.0.0.1:9200
+    username: ""
+    password: ""
+    index-name: rag_bm25
+    number-of-shards: 1
+    number-of-replicas: 0
+    connect-timeout-ms: 5000
+    socket-timeout-ms: 30000
+
   milvus:
     enabled: false
     uri: http://127.0.0.1:19530
