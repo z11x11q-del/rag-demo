@@ -53,10 +53,10 @@ public class RagService {
         String context = retrievalService.buildContext(results);
 
         // 4. Prompt 组装
-        String prompt = promptBuilder.build(context, processed.rewrittenQuery(), processed.intent());
+        PromptBuilder.Prompt prompt = promptBuilder.build(context, processed.rewrittenQuery(), processed.intent());
 
         // 5. LLM 生成
-        String rawAnswer = llmClient.chat(prompt);
+        String rawAnswer = llmClient.chat(prompt.systemPrompt(), prompt.userMessage());
 
         // 6. 后处理（引用补充 / 格式化 / 校验）
         return postProcessor.process(rawAnswer, results);

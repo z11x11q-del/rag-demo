@@ -89,7 +89,7 @@ public class StubBeanConfig {
     public PromptBuilder stubPromptBuilder() {
         return (context, query, intent) -> {
             log.warn(STUB_WARN, "PromptBuilder");
-            return query;
+            return new PromptBuilder.Prompt("", query);
         };
     }
 
