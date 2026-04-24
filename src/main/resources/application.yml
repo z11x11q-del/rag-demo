@@ -55,6 +55,13 @@ rag:
     search-ef: 128
     consistency-level: EVENTUALLY
 
+  retrieval:
+    dense-enabled: true              # 启用稠密向量召回通道
+    sparse-enabled: true             # 启用 BM25 稀疏召回通道
+    rrf-k: 60                        # RRF 平滑常数（经验值，无需调整）
+    default-top-k: 10                # 每通道默认 topK
+    score-threshold: 0.0             # 融合后最低分数阈值（0.0 = 不过滤）
+
   query:
     rewrite-enabled: true            # 是否启用 LLM 改写
     intent-recognition-enabled: true  # 是否启用 LLM 意图识别

@@ -2,13 +2,40 @@
 
 ## 1. 模块职责
 
-从多个索引通道并行召回候选文档，通过融合策略合并结果，再经重排精筛后返回最终检索结果。位于在线流水线第二阶段，是检索质量的核心决定环节。
+从多个索引通道并行召回候选文档，通过 RRF 融合策略合并结果，再经重排精筛后返回最终检索结果。位于在线流水线第二阶段，是检索质量的核心决定环节。
+
+**MVP 阶段即启用双路召回（Dense + BM25），不做单路降级**。后续通过通道抽象平滑扩展 Web Search 等第三方数据源。
 
 ---
 
-## 2. 接口定义
+## 2. 核心抽象
 
-### 2.1 RetrievalService 接口
+### 2.1 RetrievalChannel 接口
+
+召回通道统一抽象，每路数据源实现此接口：
+
+```java
+package com.example.ragdemo.retrieval;
+
+public interface RetrievalChannel {
+
+    /**
+     * 通道名称，用于日志和配置标识
+     */
+    String channelName();
+
+    /**
+     * 执行召回，返回候选结果列表（按相关性降序）
+     *
+     * @param query 预处理后的查询文本
+     * @param topK  本通道返回的最大候选数
+     * @return 候选结果列表
+     */
+    List<RetrievalResult> retrieve(String query, int topK);
+}
+```
+
+### 2.2 RetrievalService 接口
 
 ```java
 package com.example.ragdemo.retrieval;
@@ -16,7 +43,7 @@ package com.example.ragdemo.retrieval;
 public interface RetrievalService {
 
     /**
-     * 多路召回 + 融合 + 重排
+     * 多路召回 + RRF 融合 + 重排
      *
      * @param query 预处理后的查询文本
      * @param topK  每条召回通道返回的候选数
@@ -32,7 +59,7 @@ public interface RetrievalService {
 }
 ```
 
-### 2.2 实现类：DefaultRetrievalService
+### 2.3 DefaultRetrievalService 实现
 
 ```java
 @Slf4j
@@ -40,91 +67,161 @@ public interface RetrievalService {
 @Service
 public class DefaultRetrievalService implements RetrievalService {
 
-    private final VectorStore vectorStore;
-    private final BM25Store bm25Store;
-    private final EmbeddingClient embeddingClient;
+    private final List<RetrievalChannel> channels;   // 所有启用的通道，Spring 自动注入
     private final Reranker reranker;
     private final ContextBuilder contextBuilder;
 }
 ```
 
-### 2.3 依赖的外部接口
-
-| 接口 | 方法 | 用途 |
-|------|------|------|
-| `EmbeddingClient` | `embed(String text)` | 将 query 编码为稠密向量 |
-| `VectorStore` | `search(float[] queryVector, int topK)` | 向量相似度 TopK 召回 |
-| `BM25Store` | `search(String query, int topK)` | BM25 关键词 TopK 召回 |
-| `Reranker` | `rerank(String query, List<RetrievalResult>, int topN)` | 候选集精排 |
+`channels` 由 Spring 的 `List<RetrievalChannel>` 自动注入所有实现 Bean，无需手动枚举通道类型，新增通道只需注册一个新的 `@Component`。
 
 ---
 
-## 3. 详细设计
+## 3. 召回通道实现
 
-### 3.1 召回流程
-
-```
-query (String)
-    │
-    ├─────────────────────────────────┐
-    │                                 │
-    ▼                                 ▼
-┌────────────────────┐    ┌────────────────────┐
-│  Dense Retrieval   │    │  Sparse Retrieval  │
-│                    │    │                    │
-│  embed(query)      │    │  BM25Store         │
-│      ↓             │    │    .search(query,  │
-│  VectorStore       │    │            topK)   │
-│    .search(vec,    │    │                    │
-│           topK)    │    │                    │
-└────────┬───────────┘    └────────┬───────────┘
-         │                         │
-         └────────┬────────────────┘
-                  │
-                  ▼
-         ┌───────────────┐
-         │  RRF 融合      │  合并去重 + 按融合分数排序
-         └───────┬───────┘
-                 │
-                 ▼
-         ┌───────────────┐
-         │  Reranker      │  精排 → 截取 TopN
-         └───────┬───────┘
-                 │
-                 ▼
-         List<RetrievalResult>（topN 条）
-```
-
-### 3.2 召回通道详细说明
-
-#### Dense Retrieval（稠密向量召回）
+### 3.1 DenseRetrievalChannel（稠密向量召回）
 
 ```java
-// 1. 将 query 编码为向量
-float[] queryVector = embeddingClient.embed(query);
+@Slf4j
+@RequiredArgsConstructor
+@Component
+public class DenseRetrievalChannel implements RetrievalChannel {
 
-// 2. 向量相似度搜索
-List<RetrievalResult> denseResults = vectorStore.search(queryVector, topK);
+    private final VectorStore vectorStore;
+    private final EmbeddingClient embeddingClient;
+
+    @Override
+    public String channelName() { return "dense"; }
+
+    @Override
+    public List<RetrievalResult> retrieve(String query, int topK) {
+        float[] queryVector = embeddingClient.embed(query);
+        return vectorStore.search(queryVector, topK);
+    }
+}
 ```
 
-- 使用的 Embedding 模型：`text-embedding-v4`（1024 维）
-- 距离度量：COSINE（在 Milvus 中配置）
-- 返回结果的 `score` 为余弦相似度（0~1，越大越相似）
+- Embedding 模型：`text-embedding-v4`（1024 维）
+- 距离度量：COSINE（Milvus 配置）
+- `score`：余弦相似度（0~1，越大越相关）
 
-#### Sparse Retrieval（稀疏关键词召回）
+### 3.2 SparseRetrievalChannel（BM25 关键词召回）
 
 ```java
-// BM25 关键词检索
-List<RetrievalResult> sparseResults = bm25Store.search(query, topK);
+@Slf4j
+@RequiredArgsConstructor
+@Component
+public class SparseRetrievalChannel implements RetrievalChannel {
+
+    private final BM25Store bm25Store;
+
+    @Override
+    public String channelName() { return "sparse"; }
+
+    @Override
+    public List<RetrievalResult> retrieve(String query, int topK) {
+        return bm25Store.search(query, topK);
+    }
+}
 ```
 
 - 底层实现：Elasticsearch BM25
-- 返回结果的 `score` 为 BM25 分数（非归一化，值域不固定）
+- `score`：BM25 分数（非归一化，跨通道不可直接比较）
 - 优势：精确关键词匹配，适合专有名词、代码关键字等场景
 
-### 3.3 RRF 融合算法
+### 3.3 WebSearchRetrievalChannel（Web Search 通道，V2 引入）
 
-**Reciprocal Rank Fusion (RRF)** 是一种无需校准分数的融合方法，仅基于排名位置计算融合分数。
+> 本节为前瞻性设计，MVP/V1 不实现，Bean 不注册。
+
+Web Search 通道的特殊性：
+- 返回的是实时网页内容，不存储在本地向量库或 BM25 索引中
+- 结果格式为 URL + 摘要（snippet），不同于本地 `Chunk`
+- 需要将网页内容转换为 `RetrievalResult`，与本地召回结果同构后才能参与融合和重排
+
+#### 数据源适配
+
+```java
+@Slf4j
+@RequiredArgsConstructor
+// @Component  // V2 阶段手动注册，避免 MVP/V1 引入依赖
+public class WebSearchRetrievalChannel implements RetrievalChannel {
+
+    private final WebSearchClient webSearchClient;   // 封装 Bing/Tavily/Google API
+
+    @Override
+    public String channelName() { return "web"; }
+
+    @Override
+    public List<RetrievalResult> retrieve(String query, int topK) {
+        List<WebSearchResult> webResults = webSearchClient.search(query, topK);
+        return webResults.stream()
+            .map(this::toRetrievalResult)
+            .toList();
+    }
+
+    private RetrievalResult toRetrievalResult(WebSearchResult r) {
+        return RetrievalResult.builder()
+            .chunkId("web:" + r.getUrl())           // chunkId 以 "web:" 前缀区分来源
+            .content(r.getSnippet())                // 使用 snippet 参与融合和重排
+            .score(r.getRankScore())                // 搜索引擎原始排名分（0~1 归一化）
+            .metadata(Map.of(
+                "source", "web",
+                "url", r.getUrl(),
+                "title", r.getTitle(),
+                "fetchedAt", Instant.now().toString()
+            ))
+            .build();
+    }
+}
+```
+
+#### Web Search 客户端接口
+
+```java
+public interface WebSearchClient {
+
+    /**
+     * 执行 Web 搜索，返回原始结果
+     *
+     * @param query 查询文本
+     * @param topK  返回结果数
+     * @return 搜索结果列表（按搜索引擎排名）
+     */
+    List<WebSearchResult> search(String query, int topK);
+}
+```
+
+候选实现：
+| 实现 | API | 特点 |
+|------|-----|------|
+| `BingWebSearchClient` | Bing Search API v7 | 微软，结果质量稳定 |
+| `TavilyWebSearchClient` | Tavily Search API | 专为 LLM/RAG 场景设计，返回 snippet 质量高 |
+| `GoogleWebSearchClient` | Google Custom Search API | 结果最全，配额限制较严 |
+
+推荐优先对接 **Tavily**，其 API 返回的 snippet 经过针对 RAG 场景的优化，内容密度高，适合直接送入重排。
+
+---
+
+## 4. RRF 融合算法
+
+### 4.1 融合接口
+
+```java
+public interface FusionStrategy {
+
+    /**
+     * 将多个通道的召回结果融合为单一排序列表
+     *
+     * @param channelResults key=通道名, value=该通道的召回结果（已按相关性降序）
+     * @return 融合后按融合分数降序排列的候选列表
+     */
+    List<RetrievalResult> fuse(Map<String, List<RetrievalResult>> channelResults);
+}
+```
+
+### 4.2 RRF 实现
+
+**Reciprocal Rank Fusion (RRF)** 仅依赖排名位置，不依赖原始分数，天然支持异构通道（余弦相似度 vs BM25 分数 vs 搜索引擎排名分数量纲不同）。
 
 #### 公式
 
@@ -133,146 +230,268 @@ RRF_score(d) = Σ  1 / (k + rank_i(d))
                i∈channels
 ```
 
-其中：
-- `d` 为文档
-- `k` 为平滑常数（默认 60）
-- `rank_i(d)` 为文档 d 在第 i 条通道中的排名（从 1 开始，未出现则不计入）
+- `d`：文档
+- `k`：平滑常数（默认 60）
+- `rank_i(d)`：文档 d 在第 i 通道中的排名（从 1 开始；未出现则不计入）
 
-#### 伪代码
+#### 实现
 
 ```java
-private static final int RRF_K = 60;
+@Component
+public class RRFFusionStrategy implements FusionStrategy {
 
-public List<RetrievalResult> fuse(
-        List<RetrievalResult> denseResults,
-        List<RetrievalResult> sparseResults) {
+    private static final int RRF_K = 60;
 
-    Map<String, Double> rrfScores = new HashMap<>();
-    Map<String, RetrievalResult> resultMap = new HashMap<>();
+    @Override
+    public List<RetrievalResult> fuse(Map<String, List<RetrievalResult>> channelResults) {
+        Map<String, Double> rrfScores = new HashMap<>();
+        Map<String, RetrievalResult> resultMap = new HashMap<>();
 
-    // Dense 通道排名
-    for (int rank = 0; rank < denseResults.size(); rank++) {
-        RetrievalResult r = denseResults.get(rank);
-        rrfScores.merge(r.getChunkId(),
-            1.0 / (RRF_K + rank + 1), Double::sum);
-        resultMap.putIfAbsent(r.getChunkId(), r);
+        for (List<RetrievalResult> results : channelResults.values()) {
+            for (int rank = 0; rank < results.size(); rank++) {
+                RetrievalResult r = results.get(rank);
+                rrfScores.merge(r.getChunkId(),
+                    1.0 / (RRF_K + rank + 1), Double::sum);
+                resultMap.putIfAbsent(r.getChunkId(), r);
+            }
+        }
+
+        return rrfScores.entrySet().stream()
+            .sorted(Map.Entry.<String, Double>comparingByValue().reversed())
+            .map(e -> {
+                RetrievalResult r = resultMap.get(e.getKey());
+                r.setScore(e.getValue());   // 用 RRF 分数覆盖原始分数
+                return r;
+            })
+            .toList();
     }
-
-    // Sparse 通道排名
-    for (int rank = 0; rank < sparseResults.size(); rank++) {
-        RetrievalResult r = sparseResults.get(rank);
-        rrfScores.merge(r.getChunkId(),
-            1.0 / (RRF_K + rank + 1), Double::sum);
-        resultMap.putIfAbsent(r.getChunkId(), r);
-    }
-
-    // 按 RRF 分数降序排列
-    return rrfScores.entrySet().stream()
-        .sorted(Map.Entry.<String, Double>comparingByValue().reversed())
-        .map(e -> {
-            RetrievalResult r = resultMap.get(e.getKey());
-            r.setScore(e.getValue());  // 用 RRF 分数覆盖原始分数
-            return r;
-        })
-        .toList();
 }
 ```
 
-#### RRF 特点
+#### 三路 RRF 示例（引入 Web Search 后）
 
-| 优点 | 说明 |
-|------|------|
-| 无需分数校准 | 不同通道的分数量纲不同（余弦 vs BM25），RRF 只看排名不看分数 |
-| 实现简单 | 无需调参（k=60 是经验值） |
-| 效果稳定 | 在 BEIR 等基准测试上表现优于简单加权融合 |
+```
+Dense 通道：  d1(rank=1), d3(rank=2), d5(rank=3), ...
+Sparse 通道： d2(rank=1), d1(rank=2), d4(rank=3), ...
+Web 通道：    w1(rank=1), w2(rank=2), d1(rank=3), ...
 
-### 3.4 retrieve() 完整实现流程
+d1 的 RRF 分数 = 1/(60+1) + 1/(60+2) + 1/(60+3) ≈ 0.0164 + 0.0160 + 0.0157 = 0.0481
+w1 的 RRF 分数 = 1/(60+1) ≈ 0.0164（只出现在 Web 通道）
+```
+
+文档 d1 在三路均出现，RRF 分数累加，自然排到融合列表前列。
+
+---
+
+## 5. 召回流程
+
+### 5.1 双路召回（MVP/V1）
+
+```
+query (String)
+    │
+    ├────────────────────────────┐
+    │                            │
+    ▼                            ▼
+┌──────────────────┐   ┌──────────────────┐
+│ DenseRetrieval   │   │ SparseRetrieval  │
+│ Channel          │   │ Channel          │
+│                  │   │                  │
+│ embed(query)     │   │ bm25Store        │
+│     ↓            │   │   .search(query, │
+│ vectorStore      │   │           topK)  │
+│   .search(vec,   │   │                  │
+│          topK)   │   │                  │
+└────────┬─────────┘   └────────┬─────────┘
+         │                      │
+         └──────────┬───────────┘
+                    │
+                    ▼
+           ┌────────────────┐
+           │  RRF 融合       │  合并去重 + 按融合分数排序
+           └────────┬───────┘
+                    │
+                    ▼
+           ┌────────────────┐
+           │  Reranker       │  精排 → 截取 TopN
+           └────────┬───────┘
+                    │
+                    ▼
+           List<RetrievalResult>（topN 条）
+```
+
+### 5.2 三路召回（V2，引入 Web Search）
+
+```
+query (String)
+    │
+    ├─────────────────┬──────────────────┐
+    │                 │                  │
+    ▼                 ▼                  ▼
+┌─────────┐     ┌─────────┐       ┌──────────┐
+│ Dense   │     │ Sparse  │       │   Web    │
+│ Channel │     │ Channel │       │  Channel │
+└────┬────┘     └────┬────┘       └────┬─────┘
+     │               │                 │
+     └───────────┬───┘─────────────────┘
+                 │
+                 ▼
+        ┌────────────────┐
+        │  三路 RRF 融合  │
+        └────────┬───────┘
+                 │
+                 ▼
+        ┌────────────────┐
+        │  Reranker       │  跨来源统一精排（本地 + Web）
+        └────────┬───────┘
+                 │
+                 ▼
+        List<RetrievalResult>（topN 条，含来源标记）
+```
+
+### 5.3 retrieve() 完整实现
 
 ```java
 @Override
 public List<RetrievalResult> retrieve(String query, int topK, int topN) {
-    // 1. Dense Retrieval
-    float[] queryVector = embeddingClient.embed(query);
-    List<RetrievalResult> denseResults = vectorStore.search(queryVector, topK);
+    // 1. 并行执行所有启用通道的召回
+    Map<String, List<RetrievalResult>> channelResults = channels.parallelStream()
+        .collect(Collectors.toMap(
+            RetrievalChannel::channelName,
+            ch -> {
+                try {
+                    return ch.retrieve(query, topK);
+                } catch (Exception e) {
+                    log.warn("通道 [{}] 召回失败，跳过: {}", ch.channelName(), e.getMessage());
+                    return Collections.emptyList();
+                }
+            }
+        ));
 
-    // 2. Sparse Retrieval
-    List<RetrievalResult> sparseResults = bm25Store.search(query, topK);
+    // 2. 过滤全空的通道（失败的通道不参与融合）
+    channelResults.values().removeIf(List::isEmpty);
+
+    if (channelResults.isEmpty()) {
+        log.warn("所有召回通道均无结果，返回空列表");
+        return Collections.emptyList();
+    }
 
     // 3. RRF 融合
-    List<RetrievalResult> fused = fuse(denseResults, sparseResults);
+    List<RetrievalResult> fused = fusionStrategy.fuse(channelResults);
 
-    // 4. Rerank TopN
+    // 4. 重排 + 截取 TopN
     return reranker.rerank(query, fused, topN);
 }
 ```
 
 ---
 
-## 4. MVP 实现方案
+## 6. Web Search 与本地结果的融合与重排
 
-MVP 阶段仅启用 **单路向量召回**，不做融合：
+### 6.1 融合阶段（RRF）
+
+RRF 的通道无关性使其天然适合跨异构数据源融合：
+
+| 通道 | 分数类型 | RRF 处理方式 |
+|------|---------|-------------|
+| Dense | 余弦相似度（0~1） | 仅用于通道内排序，不直接参与融合计算 |
+| Sparse | BM25 分数（无上界） | 仅用于通道内排序，不直接参与融合计算 |
+| Web Search | 搜索引擎排名（0~1 或整数位次） | 仅用于通道内排序，不直接参与融合计算 |
+
+三路 RRF 只看**每路通道内的排名位置**，不跨通道比较原始分数，因此异构数据源可无缝融合。
+
+### 6.2 重排阶段（Cross-Encoder）
+
+重排时，本地 Chunk 和 Web Search snippet 统一作为文本字符串送入 Cross-Encoder：
 
 ```java
-@Override
-public List<RetrievalResult> retrieve(String query, int topK, int topN) {
-    // MVP: 仅 Dense Retrieval
-    float[] queryVector = embeddingClient.embed(query);
-    List<RetrievalResult> results = vectorStore.search(queryVector, topK);
+// Reranker 视角：所有 candidate 均为 (query, content) 对，不区分来源
+List<String> documents = candidates.stream()
+    .map(RetrievalResult::getContent)  // 本地 chunk content 或 web snippet
+    .toList();
 
-    // MVP: 直接截取 TopN（Reranker stub 已实现此逻辑）
-    return reranker.rerank(query, results, topN);
-}
+List<Double> scores = rerankerApi.rerank(query, documents);
 ```
 
-MVP 不启用 BM25 通道的原因：
-- 减少外部依赖（不强制要求 Elasticsearch 启动）
-- 先验证向量召回 + LLM 生成的端到端链路
+Cross-Encoder 直接在 query 和内容之间计算语义相关性，与内容来源无关，因此本地文档和网页片段可在同一排序空间竞争。
+
+**注意事项**：
+- Web Search snippet 通常较短（100~300 字），与本地 chunk 长度相近，重排效果较好
+- 如果 Web Search 返回全文（非 snippet），需在 `WebSearchRetrievalChannel` 内先截断至 max_chunk_length（如 512 tokens）再参与融合
+- 重排后的 `RetrievalResult.metadata` 保留 `source` 和 `url` 字段，供 ContextBuilder 在构建上下文时添加来源引用
+
+### 6.3 上下文标记
+
+ContextBuilder 在处理 Web Search 来源的结果时，添加来源引用：
+
+```java
+// 示例：上下文中为 Web 来源内容添加引用标注
+if ("web".equals(result.getMetadata().get("source"))) {
+    sb.append(String.format("[来源: %s]\n", result.getMetadata().get("url")));
+}
+sb.append(result.getContent()).append("\n\n");
+```
 
 ---
 
-## 5. 配置项
+## 7. 配置项
 
 ```yaml
 rag:
   retrieval:
-    dense-enabled: true              # 启用向量召回（默认开启）
-    sparse-enabled: false            # 启用 BM25 召回（MVP 关闭，V1 开启）
+    dense-enabled: true              # 启用向量召回（MVP 开启）
+    sparse-enabled: true             # 启用 BM25 召回（MVP 开启）
+    web-enabled: false               # 启用 Web Search 召回（V2 开启）
     rrf-k: 60                        # RRF 平滑常数
-    default-top-k: 10               # 默认 topK
-    score-threshold: 0.0            # 最低分数阈值，低于此值的结果丢弃
-    parallel-retrieval: true        # 是否并行执行多路召回
+    default-top-k: 10                # 每通道默认 topK
+    score-threshold: 0.0             # 融合后最低分数阈值
+    parallel-retrieval: true         # 并行执行多路召回
+
+  web-search:
+    provider: tavily                 # 使用的 Web Search 提供商
+    api-key: ${WEB_SEARCH_API_KEY:}
+    max-results: 5                   # Web Search 单次最大结果数
+    snippet-max-tokens: 512          # Snippet 最大 token 数（超出截断）
+    timeout-seconds: 3               # Web Search 超时（高于本地召回）
 ```
 
 ---
 
-## 6. 异常处理
+## 8. 降级矩阵
 
-| 异常场景 | 处理策略 |
-|---------|---------|
-| EmbeddingClient 编码失败 | 抛出 `EmbeddingException`，外层捕获后返回 500 |
-| VectorStore 不可用 | 若 BM25 启用则降级到纯稀疏召回；否则抛出异常 |
-| BM25Store 不可用 | 若 Dense 启用则降级到纯向量召回；否则抛出异常 |
-| 两条通道均无结果 | 返回空列表，后续 ContextBuilder 处理空上下文场景 |
-| 召回超时 | 设置单通道超时（如 2s），超时后使用已返回的结果继续流程 |
+| Dense | Sparse | Web | 行为 |
+|-------|--------|-----|------|
+| OK | OK | 禁用/失败 | 双路 RRF 融合 |
+| OK | 失败 | 禁用 | 仅向量召回，跳过融合，直接重排 |
+| 失败 | OK | 禁用 | 仅 BM25 召回，跳过融合，直接重排 |
+| OK | OK | OK | 三路 RRF 融合 |
+| OK | OK | 失败 | 双路 RRF 融合，记录 Web 通道失败日志 |
+| 失败 | 失败 | - | 返回空结果 + error 日志 |
 
-### 降级矩阵
-
-| Dense | Sparse | 行为 |
-|-------|--------|------|
-| OK | OK | RRF 融合 |
-| OK | 失败/禁用 | 仅向量召回结果直接进入重排 |
-| 失败/禁用 | OK | 仅 BM25 结果直接进入重排 |
-| 失败 | 失败 | 返回空结果 + warn 日志 |
+通道失败不影响其他通道：异常被捕获后该通道结果记为空列表，从融合计算中排除。
 
 ---
 
-## 7. 演进规划
+## 9. 异常处理
 
-| 阶段 | 能力 | 说明 |
-|------|------|------|
-| MVP | 单路向量召回 | `vectorStore.search()` → `reranker.rerank()` |
-| V1 | 混合召回 + RRF | 启用 BM25，两路并行召回 + RRF 融合 |
-| V1+ | 并行召回优化 | 使用 `CompletableFuture` 并行执行两路召回 |
-| V2 | 缓存召回 | 热点 query 结果缓存，跳过召回直接返回 |
-| V2+ | 置信度过滤 | 单路分数过低的结果直接丢弃，不参与融合 |
-| V4 | 图谱召回 | 新增知识图谱召回通道，实体关系扩展 |
+| 异常场景 | 处理策略 |
+|---------|---------|
+| EmbeddingClient 编码失败 | Dense 通道失败，降级到其他通道；若无其他通道则抛出异常 |
+| VectorStore 不可用 | Dense 通道返回空列表，其他通道继续 |
+| BM25Store 不可用 | Sparse 通道返回空列表，其他通道继续 |
+| Web Search API 超时 | Web 通道超时（`timeout-seconds`），超时后返回空列表，不阻塞流程 |
+| Web Search API 限流/错误 | Web 通道返回空列表 + warn 日志 |
+| 所有通道无结果 | 返回空列表，后续 ContextBuilder 处理空上下文场景 |
+
+---
+
+## 10. 演进规划
+
+| 阶段 | 通道 | 融合 | 重排 | 说明 |
+|------|------|------|------|------|
+| MVP | Dense + Sparse（BM25） | 双路 RRF | 截断（TruncationReranker） | 两路并行召回，无模型重排 |
+| V1 | Dense + Sparse | 双路 RRF | Cross-Encoder（DashScope） | 接入 DashScope Reranker |
+| V1+ | Dense + Sparse | 双路 RRF + 并行优化 | Cross-Encoder | `CompletableFuture` 显式并行，超时控制 |
+| V2 | Dense + Sparse + Web | 三路 RRF | Cross-Encoder（跨来源） | 接入 Web Search，上下文引入来源引用 |
+| V3 | Dense + Sparse + Web | 三路 RRF | 粗排+精排 | 先轻量模型粗筛（topK*3→50），再精排（50→topN） |
+| V4 | + 图谱召回 | 多路 RRF | 精排 | 新增知识图谱实体关系扩展通道 |
